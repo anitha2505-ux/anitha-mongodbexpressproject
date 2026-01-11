@@ -25,7 +25,9 @@ app.get('/test', function(req,res){
 });
 
 app.get('/recipes', async function(req,res){
-    const recipes = await db.collection('recipes').find().toArray();
+    const recipes = await db.collection('recipes').find().project({
+        name: 1, cuisine: 1, tags: 1, prepTime: 1
+    }).toArray();
     res.json({
         "recipes": recipes
     })
