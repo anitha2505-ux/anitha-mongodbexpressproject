@@ -14,6 +14,68 @@ app.use(express.json()); // tell express that we are sending and receiving data 
 const mongoUri = process.env.MONGO_URI;
 const dbName = "recipecatalogue";
 
+async function validateRecipe(db, request) {
+    const { name, cuisine, prepTime, cookTime, servings, ingredients, instructions, tags } = request;
+
+    // basic validation
+    if (!name || !cuisine || !ingredients || !instructions || !tags || !prepTime || !cookTime || !servings) {
+        return {
+            "success": false,
+            "error": "Missing fields",
+        }
+    }
+
+    // validate the cuisine
+    const cuisineDoc = await db.collection('cuisines').findOne({
+        name: cuisine
+    });
+
+    if (!cuisineDoc) {
+        return {
+            "success": false,
+            "error": "Invalid cuisine"
+        }
+    }
+
+    // validate the tags
+
+    // find the tags from the database
+    const tagDocs = await db.collection('tags').find({
+        "name": {
+            $in: tags
+        }
+    }).toArray();
+
+    // check if the number of tags that we have found matches the length of the tags array
+    if (tagDocs.length != tags.length) {
+        return {
+            success: false,
+            error: "One or more tags is invalid"
+        }
+    }
+
+    const newRecipe = {
+        name,
+        cuisine: {
+            _id: cuisineDoc._id,
+            name: cuisineDoc.name
+        },
+        prepTime,
+        cookTime,
+        servings,
+        ingredients,
+        instructions,
+        tags: tagDocs
+    }
+
+    return {
+        success: true,
+        newRecipe: newRecipe,
+        error: null
+    }
+
+}
+
 async function main() {
     const db = await connect(mongoUri, dbName);
 
@@ -33,7 +95,7 @@ async function main() {
         })
     });
 
-    app.post('/receipes', async function (req, res) {
+    app.post('/recipes', async function (req, res) {
         //syntaxic sugar
         //object destructring to extract info from req.body
         const { name, cuisine, prepTime, cookTime, servings, ingredients, instructions, tags } = req.body;
@@ -92,6 +154,27 @@ async function main() {
             message: "Recipe Added",
             recipeId: result.insertedId
         })
+    })
+
+    app.put('/recipes/:id', async function (req,res) {
+        const recipeId = req.params.id;
+        const status = await validateRecipe(db, req.body);
+        if (status.success) {
+            //update the recipe
+            const result = await db.collection('recipes').updateOne({
+                _id: new ObjectId(recipeId)
+
+            }, {
+                $set: status.newRecipe
+            });
+            res.json({
+                'message': "Recipe has been successfully updated"
+            })
+        } else {
+            res.status(400).json({
+                error: status.error
+            })
+        }
     })
 }
 
