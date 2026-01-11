@@ -15,7 +15,7 @@ const mongoUri = process.env.MONGO_URI;
 const dbName = "recipecatalogue";
 
 async function main() {
-    const db = connect(mongoUri, dbName);
+    const db = await connect(mongoUri, dbName);
 
     //ROUTES
 app.get('/test', function(req,res){
