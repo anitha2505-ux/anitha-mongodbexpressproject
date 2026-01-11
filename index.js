@@ -86,14 +86,76 @@ async function main() {
         })
     });
 
+    // app.get with search query, regex
     app.get('/recipes', async function (req, res) {
+        console.log(req.query);
+        const name = req.query.name;
+        const tags = req.query.tags;
+        const ingredients = req.query.ingredients;
+        // when criteria is empty, it returns everything
+        const criteria = {};
+        if (name) {
+            // search by string patterns using regex
+            criteria["name"] = {
+                $regex: name,
+                $options: "i"
+            }
+        }
+
+        if (tags) {
+            criteria["tags.name"] = {
+                $in: tags.split(",")
+            }
+        }
+
+        // simple search - must be exact match and is case sensitive
+        // if (ingredients) {
+        //     critera["ingredients.name"] = {
+        //         $all: ingredients.split(",")
+        //     }
+        // }
+        // advanced search: use $all with regular expressions
+
+        if (ingredients) {
+            // traditional way of using for...loop
+            // const ingredientArray = ingredients.split(",");
+            // const regularExpressionArray = [];
+            // for (let ingredient of ingredientArray) {
+            //     regularExpressionArray.push(new RegExp(ingredient, 'i'));
+            // }
+
+            // modern way: use .map
+            // const ingredientArray = ingredients.split(",");
+            // const regularExpressionArray = ingredientArray.map(function(ingredient){
+            //     return new RegExp(ingredient, 'i')
+            // })
+
+            // using arrow function:
+            const regularExpressionArray = ingredients.split(",").map(
+                ingredient => new RegExp(ingredient, "i")
+            );
+
+            criteria['ingredients.name'] = {
+                $all: regularExpressionArray
+            }
+        }
+
+        console.log(criteria);
+        const recipes = await db.collection('recipes').find(criteria).project({
+            name: 1, cuisine: 1, tags: 1, prepTime: 1
+        }).toArray();
+        res.json({
+            "recipes": recipes
+        })
+    })
+    /* Old app.get('/recipes', async function (req, res) {
         const recipes = await db.collection('recipes').find().project({
             name: 1, cuisine: 1, tags: 1, prepTime: 1
         }).toArray();
         res.json({
             "recipes": recipes
         })
-    });
+    }); */
 
     app.post('/recipes', async function (req, res) {
         //syntaxic sugar
@@ -157,7 +219,7 @@ async function main() {
         })
     })
 
-    app.put('/recipes/:id', async function (req,res) {
+    app.put('/recipes/:id', async function (req, res) {
         const recipeId = req.params.id;
         const status = await validateRecipe(db, req.body);
         if (status.success) {
@@ -173,6 +235,29 @@ async function main() {
         } else {
             res.status(400).json({
                 error: status.error
+            })
+        }
+    })
+
+    app.delete('/recipes/:id', async function (req, res) {
+        try {
+            const recipeId = req.params.id;
+            await db.collection('recipes').deleteOne({
+                _id: new ObjectId(recipeId)
+            });
+
+            if (results.deletedCount === 0) {
+                return res.status(404).json({
+                    "error": "not found"
+                })
+            }
+
+            res.json({
+                "message": "deleted successfully"
+            })
+        } catch (e) {
+            res.status(500).json({
+                'error': "internal server error"
             })
         }
     })
