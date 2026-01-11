@@ -3,7 +3,7 @@ const express = require('express');
 require('dotenv').config();//put the variables in the .env file into process.env
 const cors = require('cors');
 const { connect } = require("./db");
-const { objectId } = require('mongodb');
+const { ObjectId } = require('mongodb');
 
 //SETUP EXPRESS
 const app = express();
@@ -136,6 +136,7 @@ async function main() {
         }
 
         const newRecipe = {
+            _id: new ObjectId(),
             name,
             cuisine: {
                 _id: cuisineDoc._id,
@@ -163,7 +164,6 @@ async function main() {
             //update the recipe
             const result = await db.collection('recipes').updateOne({
                 _id: new ObjectId(recipeId)
-
             }, {
                 $set: status.newRecipe
             });
