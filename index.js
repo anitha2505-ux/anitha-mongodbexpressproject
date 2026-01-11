@@ -4,6 +4,10 @@ require('dotenv').config();//put the variables in the .env file into process.env
 const cors = require('cors');
 const { connect } = require("./db");
 const { ObjectId } = require('mongodb');
+const { ai, generateSearchParams, generateRecipe } = require('./gemini');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { verifyToken } = require("./middlewares")
 
 //SETUP EXPRESS
 const app = express();
@@ -13,6 +17,20 @@ app.use(express.json()); // tell express that we are sending and receiving data 
 //SETUP DATABASE
 const mongoUri = process.env.MONGO_URI;
 const dbName = "recipecatalogue";
+
+function generateAccessToken(id, email) {
+    // jwt.sign creates a JWT
+    // first parameter -> object payload, or token data, the data that is in the JWT (i.e "claims")
+    // second parameter -> your secret key
+    // third parameter -> options object
+    return jwt.sign({
+        "user_id": id,
+        "email": email
+    }, process.env.TOKEN_SECRET, {
+        // m = minutes, h = hours, s = seconds, d = days, w = weeks
+        "expiresIn": "1h"
+    });
+}
 
 async function validateRecipe(db, request) {
     const { name, cuisine, prepTime, cookTime, servings, ingredients, instructions, tags } = request;
@@ -87,6 +105,11 @@ async function main() {
     });
 
     // app.get with search query, regex
+    //query string parameter
+    // name of the recipe 
+    // tag - example: popular, spicy
+    // example: 
+    // ?name=chicken&tags=popular,spicy&ingredients=chicken
     app.get('/recipes', async function (req, res) {
         console.log(req.query);
         const name = req.query.name;
@@ -156,6 +179,17 @@ async function main() {
             "recipes": recipes
         })
     }); */
+
+    // use the route parameter `recipeId` to refer to the recipe we want
+    app.get("/recipes/:recipeId", async function (req, res) {
+        const recipeId = req.params.recipeId;
+        const recipe = await db.collection("recipes").findOne({
+            _id: new ObjectId(recipeId)
+        })
+        res.json({
+            recipe
+        });
+    })
 
     app.post('/recipes', async function (req, res) {
         //syntaxic sugar
@@ -261,7 +295,146 @@ async function main() {
             })
         }
     })
+
+    app.get('/ai/recipes', async function (req, res) {
+        const query = req.query.q;
+
+        const allCuisines = await db.collection('cuisines').distinct('name');
+        const allTags = await db.collection('tags').distinct('name');
+        const allIngredients = await db.collection('ingredients').distinct('name');
+        const searchParams = await generateSearchParams(query, allTags, allCuisines, allIngredients);
+        console.log(searchParams);
+
+        const criteria = {};
+
+        if (searchParams.cuisines && searchParams.cuisines.length > 0) {
+            criteria["cuisine.name"] = {
+                $in: searchParams.cuisines
+            }
+        }
+
+        if (searchParams.ingredients && searchParams.ingredients.length > 0) {
+            criteria["ingredients.name"] = {
+                $all: searchParams.ingredients
+            }
+        }
+
+        if (searchParams.tags && searchParams.tags.length > 0) {
+            criteria['tags.name'] = {
+                $in: searchParams.tags
+            }
+        }
+
+        console.log(criteria);
+
+        const recipes = await db.collection('recipes').find(criteria).toArray();
+        res.json({
+            recipes
+        })
+    })
+    app.post('/ai/recipes', async function (req, res) {
+        const recipeText = req.body.recipeText;
+        const allCuisines = await db.collection('cuisines').distinct('name');
+        const allTags = await db.collection('tags').distinct('name');
+        const newRecipe = await generateRecipe(recipeText, allCuisines, allTags);
+
+        // get the cuisine document
+        const cuisineDoc = await db.collection('cuisines').findOne({
+            "name": newRecipe.cuisine
+        });
+
+        if (cuisineDoc) {
+            newRecipe.cuisine = cuisineDoc;
+        } else {
+            return res.status(404).json({
+                "error": "AI tried to use a cuisine that doesn't exist"
+            })
+        }
+
+        // get all the tags that corresponds 
+        const tagDocs = await db.collection('tags').find({
+            'name': {
+                $in: newRecipe.tags
+            }
+        }).toArray();
+        newRecipe.tags = tagDocs;
+
+        // insert into the database
+        const result = await db.collection('recipes').insertOne(newRecipe);
+        res.json({
+            recipeId: result.insertedId
+        })
+    })
+
+    // register router
+    // sample request body
+    // {
+    //    "email":"sarah@gemail.com",
+    //    "password": "pw123"
+    // }
+    app.post('/users', async function (req, res) {
+        const result = await db.collection('users')
+            .insertOne({
+                "email": req.body.email,
+                "password": await bcrypt.hash(req.body.password, 12)
+            });
+
+        res.json({
+            message: "New user has been create has been created successfully",
+            userId: result.insertedId
+        })
+    })
+
+    // sample POST body
+    // {
+    //   "email":"tanahkow@gemail.com",
+    //   "password":"rotiprata123"
+    // }
+    app.post('/login', async function (req, res) {
+        const { email, password } = req.body;
+        const user = await db.collection("users").findOne({
+            "email": email
+        });
+
+        // compare takes in two parameters
+        // first parameter: plain text
+        // second parameter: hashed version
+        // return true if they are the same
+        if (user) {
+            const isPasswordValid = await bcrypt.compare(password, user.password);
+            if (isPasswordValid) {
+                // generate JWT
+                const accessToken = generateAccessToken(user._id, user.email)
+
+                // send back JWT
+                res.json({
+                    accessToken
+                })
+            } else {
+                return res.status(401).json({
+                    'error': 'Invalid login'
+                })
+            }
+        } else {
+            return res.status(401).json({
+                'error': 'Invalid login'
+            })
+        }
+
+    })
+
+    // The access token will be in the request's header, in the Authorization field
+    // the format will be "Bearer <JWT>"
+    app.get('/protected', [verifyToken], function (req, res) {
+        const tokenData = req.tokenData; // added by the verifyToken middleware
+        res.json({
+            "message": "This is a secret message",
+            tokenData
+        })
+
+    })
 }
+
 
 main();
 
