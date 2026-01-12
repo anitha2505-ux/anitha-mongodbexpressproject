@@ -276,7 +276,7 @@ async function main() {
     app.delete('/recipes/:id', async function (req, res) {
         try {
             const recipeId = req.params.id;
-            await db.collection('recipes').deleteOne({
+            const results = await db.collection('recipes').deleteOne({
                 _id: new ObjectId(recipeId)
             });
 
